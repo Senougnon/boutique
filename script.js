@@ -1,3 +1,4 @@
+
 // Configuration Firebase
 const firebaseConfig = {
     apiKey: "AIzaSyAPk0glFjN0eqfIdI9rtgjGtBvzquPywOk",
@@ -13,6 +14,7 @@ const firebaseConfig = {
 // Initialiser Firebase
 firebase.initializeApp(firebaseConfig);
 const database = firebase.database();
+const adminRef = firebase.database().ref('admin/subscription');
 
 // Default markup values
 let detailMarkupPercentage = 20;
@@ -63,6 +65,13 @@ const dateDebutAnalyseInput = document.getElementById('dateDebutAnalyse');
 const dateFinAnalyseInput = document.getElementById('dateFinAnalyse');
 const appliquerAnalyseButton = document.getElementById('appliquerAnalyse');
 const stockOperationsTable = document.getElementById('stockOperationsTable').querySelector('tbody');
+const subscriptionStatusDisplay = document.getElementById('subscriptionStatus');
+const subscribeMonthlyButton = document.getElementById('subscribeMonthly');
+const subscribeYearlyButton = document.getElementById('subscribeYearly');
+const cancelSubscriptionButton = document.getElementById('cancelSubscription');
+const paymentModal = document.getElementById('paymentModal');
+const overlay = document.getElementById('overlay');
+const subscriptionRequiredModal = document.getElementById('subscriptionRequiredModal');
 
 
 let currentUser = null;
@@ -99,11 +108,29 @@ function afficherSection(sectionId) {
     }
 }
 
+function checkUserAccess(sectionId) {
+    firebase.database().ref('admin/subscription').once('value', snapshot => {
+        const subscription = snapshot.val();
+        const now = new Date();
+
+        if (subscription && subscription.status === 'active') {
+            const endDate = new Date(subscription.endDate);
+            if (endDate < now) {
+                showSubscriptionRequiredModal();
+            } else {
+                afficherSection(sectionId);
+            }
+        } else {
+            showSubscriptionRequiredModal();
+        }
+    });
+}
+
 navLinks.forEach(link => {
     link.addEventListener('click', function(event) {
         event.preventDefault();
         const sectionId = this.dataset.section;
-        afficherSection(sectionId);
+        checkUserAccess(sectionId);
          if (sectionId === 'depensesSection') {
             const boutique = boutiqueSelect.value;
             chargerDepenses(boutique);
@@ -588,6 +615,7 @@ stockForm.addEventListener('submit', function(event) {
     const produitsRef = database.ref('produits');
     produitsRef.orderByChild('nom').equalTo(produit).once('value', (snapshot) => {
         if (snapshot.exists()) {
+            // Product already exists, no action needed
         } else {
             const newProduitRef = produitsRef.push();
             newProduitRef.set({
@@ -596,7 +624,7 @@ stockForm.addEventListener('submit', function(event) {
             .then(() => {
                 console.log('Produit ajouté à la liste des produits');
             })
-            .catch(error => {
+            .catch(error => { // Correction: Changed ')' =>' to 'error => {' and added curly braces
                 console.error("Erreur lors de l'ajout du produit à la liste des produits:", error);
             });
         }
@@ -1423,6 +1451,7 @@ function checkLoginStatus() {
             nextWeek.setDate(nextWeek.getDate() + 7);
             const dateFinSemaine = nextWeek.toISOString().split('T')[0];
              getSalesBySeller(boutique,  getFirstDayOfCurrentMonth().toISOString().split('T')[0], today);
+             checkSubscriptionStatus();
 
 
     } else {
@@ -1457,6 +1486,143 @@ function loadMarkupPercentages() {
         }
     });
 }
+
+function showLoader() {
+    document.getElementById('loaderWrapper').style.display = 'block';
+}
+
+function hideLoader() {
+    document.getElementById('loaderWrapper').style.display = 'none';
+}
+
+function showPageLoader() {
+    document.getElementById('pageLoaderWrapper').style.display = 'flex';
+}
+
+function hidePageLoader() {
+    document.getElementById('pageLoaderWrapper').style.display = 'none';
+}
+function showSubscriptionRequiredModal() {
+    subscriptionRequiredModal.style.display = 'flex';
+}
+
+function hideSubscriptionRequiredModal() {
+    subscriptionRequiredModal.style.display = 'none';
+}
+
+function redirectToSubscription() {
+    hideSubscriptionRequiredModal();
+    // Focus on subscription section if needed
+}
+function closePaymentModal() {
+    paymentModal.style.display = 'none';
+    overlay.style.display = 'none';
+}
+function initiatePayment(plan) {
+    const amount = plan === 'monthly' ? 2000 : 22000; // Updated prices
+    const planDescription = plan === 'monthly' ? 'Abonnement mensuel' : 'Abonnement annuel';
+
+    FedaPay.init({
+        public_key: 'pk_live_TfSz212W0xSMKK7oPEogkFmp',
+        transaction: {
+            amount: amount,
+            description: planDescription,
+        },
+        customer: {
+            email: 'admin@example.com', // Admin email
+        },
+        onComplete: async function(response) {
+            if (response.reason === FedaPay.DIALOG_DISMISSED) {
+                alert('Paiement annulé.');
+            } else if (response.reason === FedaPay.CHECKOUT_COMPLETED) {
+                handleSuccessfulPayment(plan, response);
+            }
+        }
+    }).open();
+}
+
+async function handleSuccessfulPayment(plan, response) {
+    const startDate = new Date();
+    const endDate = new Date(startDate);
+    if (plan === 'monthly') {
+        endDate.setMonth(endDate.getMonth() + 1);
+    } else {
+        endDate.setFullYear(endDate.getFullYear() + 1);
+    }
+
+    const subscriptionData = {
+        status: 'active',
+        startDate: startDate.toISOString(),
+        endDate: endDate.toISOString(),
+        transactionId: response.transaction.id,
+        plan: plan
+    };
+
+    try {
+        await firebase.database().ref('admin/subscription').set(subscriptionData);
+        checkSubscriptionStatus();
+        alert(`Abonnement ${plan === 'monthly' ? 'mensuel' : 'annuel'} réussi!`);
+    } catch (error) {
+        console.error('Erreur lors de la mise à jour de l\'abonnement:', error);
+        alert('Erreur lors de la mise à jour de l\'abonnement.');
+    }
+}
+
+async function cancelSubscription() {
+    try {
+        await firebase.database().ref('admin/subscription').set({ status: 'cancelled' });
+        checkSubscriptionStatus();
+        alert('Abonnement annulé.');
+    } catch (error) {
+        console.error('Erreur lors de l\'annulation de l\'abonnement:', error);
+        alert('Erreur lors de l\'annulation de l\'abonnement.');
+    }
+}
+function checkSubscriptionStatus() {
+    return new Promise((resolve, reject) => {
+        firebase.database().ref('admin/subscription').once('value', (snapshot) => {
+            const subscription = snapshot.val();
+            const now = new Date();
+
+            if (subscription && subscription.status === 'active') {
+                const endDate = new Date(subscription.endDate);
+                if (endDate < now) {
+                    // Subscription expired
+                    subscriptionStatusDisplay.textContent = "Statut de l'abonnement: Expiré";
+                    subscriptionStatusDisplay.style.color = 'red';
+                    subscribeMonthlyButton.style.display = 'inline-block';
+                    subscribeYearlyButton.style.display = 'inline-block';
+                    cancelSubscriptionButton.style.display = 'none';
+                    firebase.database().ref('admin/subscription').update({ status: 'expired' }); // Update status to expired in DB
+                } else {
+                    // Subscription active
+                    subscriptionStatusDisplay.textContent = `Statut de l'abonnement: Actif jusqu'au ${endDate.toLocaleDateString()}`;
+                    subscriptionStatusDisplay.style.color = 'green';
+                    subscribeMonthlyButton.style.display = 'none';
+                    subscribeYearlyButton.style.display = 'none';
+                    cancelSubscriptionButton.style.display = 'inline-block';
+                }
+                resolve(); // Resolve the promise after handling subscription status
+            } else {
+                // No active subscription
+                subscriptionStatusDisplay.textContent = "Statut de l'abonnement: Inactif";
+                subscriptionStatusDisplay.style.color = 'red';
+                subscribeMonthlyButton.style.display = 'inline-block';
+                subscribeYearlyButton.style.display = 'inline-block';
+                cancelSubscriptionButton.style.display = 'none';
+                resolve(); // Resolve promise even when no active subscription, to continue initialization
+            }
+        }).catch((error) => {
+            console.error("Error fetching subscription status:", error);
+            reject(error); // Reject promise if there's an error fetching subscription status
+        });
+    });
+}
+
+
+subscribeMonthlyButton.addEventListener('click', () => initiatePayment('monthly'));
+subscribeYearlyButton.addEventListener('click', () => initiatePayment('yearly'));
+cancelSubscriptionButton.addEventListener('click', () => cancelSubscription());
 
 
 checkLoginStatus();
@@ -1827,3 +1993,21 @@ function approvisionnerProduitDuStock(produit, boutique) {
         }
     });
 }
+
+document.addEventListener('DOMContentLoaded', () => {
+    showPageLoader();
+    checkSubscriptionStatus()
+        .then(() => {
+          lucide.createIcons();
+          hidePageLoader();
+        })
+        .catch((error) => {
+            console.error("Subscription check error:", error);
+            hidePageLoader();
+            showStatusMessage("Erreur lors de la vérification de l'abonnement.", false);
+        });
+});
+
+window.redirectToSubscription = redirectToSubscription;
+window.hideSubscriptionRequiredModal = hideSubscriptionRequiredModal;
+window.closePaymentModal = closePaymentModal;

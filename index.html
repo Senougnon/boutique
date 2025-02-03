@@ -6,18 +6,155 @@
     <title>Gestion de Boutique</title>
     <link rel="stylesheet" href="style.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-auth.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
      <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.4.0/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.20/jspdf.plugin.autotable.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.1/css/all.min.css">
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdn.fedapay.com/checkout.js?v=1.1.7"></script>
 
+    <style>
+
+
+        /* Style pour le message d'abonnement requis */
+        .subscription-required {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            text-align: center;
+            padding: 20px;
+        }
+
+        .subscription-required-content {
+            background-color: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.5);
+            max-width: 400px;
+            width: 90%;
+        }
+
+        .subscription-required-content h2 {
+            color: #333;
+            margin-bottom: 20px;
+        }
+
+        .subscription-required-content p {
+            color: #666;
+            margin-bottom: 30px;
+        }
+
+        .subscription-required-content button {
+            background-color: #007bff;
+            color: #fff;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 25px;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-weight: 600;
+            font-size: 0.9rem;
+            margin: 0 10px;
+        }
+
+        .subscription-required-content button:hover {
+            background-color: #0056b3;
+        }
+        .loader-wrapper {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            z-index: 1001;
+        }
+
+        .loader {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            border: 6px solid #f3f3f3;
+            border-top: 6px solid #007bff;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 2s linear infinite;
+            transform: translate(-50%, -50%);
+        }
+
+        @keyframes spin {
+            0% { transform: translate(-50%, -50%) rotate(0deg); }
+            100% { transform: translate(-50%, -50%) rotate(360deg); }
+        }
+
+        .page-loader-wrapper {
+            display: flex;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.8);
+            z-index: 1002;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .page-loader {
+            border: 6px solid #f3f3f3;
+            border-top: 6px solid #007bff;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 2s linear infinite;
+        }
+
+        .loader-message {
+            color: white;
+            margin-top: 16px;
+            font-size: 1rem;
+            text-align: center;
+            max-width: 80%;
+        }
+
+
+    </style>
 </head>
 <body>
+    <div class="page-loader-wrapper" id="pageLoaderWrapper">
+        <div class="page-loader"></div>
+        <div class="loader-message" id="pageLoaderMessage">Initialisation...</div>
+    </div>
+    <div class="loader-wrapper" id="loaderWrapper">
+        <div class="loader"></div>
+    </div>
 
     <header>
-        <h1>Gestion de Boutique</h1>
+        <div>
+            <h1>Gestion de Boutique</h1>
+             <div id="subscriptionSection">
+                <div id="subscriptionStatus"></div>
+                <div class="subscription-buttons">
+                    <button id="subscribeMonthly">S'abonner (Mensuel - 2000 FCFA)</button>
+                    <button id="subscribeYearly">S'abonner (Annuel - 22 000 FCFA)</button>
+                    <button id="cancelSubscription" style="display: none;">Annuler l'abonnement</button>
+                </div>
+            </div>
+        </div>
+
         <nav>
             <ul>
                 <li><a href="#" data-section="accueil">Accueil</a></li>
@@ -67,6 +204,7 @@
                     <p id="beneficeGeneral"></p>
                 </div>
                 </div>
+             <canvas id="ventesChart" width="400" height="200"></canvas>
 
             </section>
 
@@ -384,6 +522,28 @@
         <footer>
             <p>© 2023 Gestion de Boutique</p>
         </footer>
+
+        <!-- Modals -->
+        <div id="paymentModal" class="payment-modal" style="display: none;">
+            <span class="close-modal" onclick="closePaymentModal()">×</span>
+            <h2>Paiement de l'Abonnement</h2>
+            <p>Choisissez votre plan d'abonnement et procédez au paiement via FedaPay.</p>
+            <!-- Les boutons de paiement seront ajoutés ici par le script -->
+        </div>
+
+        <div id="subscriptionRequiredModal" class="subscription-required" style="display: none;">
+            <div class="subscription-required-content">
+                <h2>Abonnement Requis</h2>
+                <p>Un abonnement actif est nécessaire pour accéder à cette fonctionnalité.</p>
+                <button onclick="redirectToSubscription()">S'abonner</button>
+                <button onclick="hideSubscriptionRequiredModal()">Fermer</button>
+            </div>
+        </div>
+
+        <div class="overlay" id="overlay" style="display: none;" onclick="closePaymentModal()"></div>
+
+        <canvas id="ventesChart" style="display:none;"></canvas>
+
 
         <script src="script.js"></script>
     </body>
